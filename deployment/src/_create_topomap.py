@@ -8,12 +8,6 @@ import time
 # ROS
 import rospy
 import rosbag
-from sensor_msgs.msg import Image
-from sensor_msgs.msg import Joy
-
-IMAGE_TOPIC = "/camera/image_raw"
-obs_img = None
-
 
 def remove_files_in_dir(dir_path: str):
     for f in os.listdir(dir_path):
@@ -27,25 +21,8 @@ def remove_files_in_dir(dir_path: str):
             print("Failed to delete %s. Reason: %s" % (file_path, e))
 
 
-def callback_obs(msg: Image):
-    global obs_img
-    obs_img = msg_to_pil(msg)
-
-
-def callback_joy(msg: Joy):
-    if msg.buttons[0]:
-        rospy.signal_shutdown("shutdown")
-
 
 def main(args: argparse.Namespace):
-    global obs_img
-    rospy.init_node("CREATE_TOPOMAP", anonymous=False)
-    image_curr_msg = rospy.Subscriber(
-        args.image_topic_name, Image, callback_obs, queue_size=1)
-    subgoals_pub = rospy.Publisher(
-        "/subgoals", Image, queue_size=1)
-    joy_sub = rospy.Subscriber("joy", Joy, callback_joy)
-
     topomap_name_dir = os.path.join(args.output_dir)
     if not os.path.isdir(topomap_name_dir):
         os.makedirs(topomap_name_dir)
@@ -53,28 +30,36 @@ def main(args: argparse.Namespace):
         print(f"{topomap_name_dir} already exists. Removing previous images...")
         remove_files_in_dir(topomap_name_dir)
 
+    bagfile = rosbag.Bag(args.bagfile_path)
 
     assert args.dt > 0, "dt must be positive"
-    rate = rospy.Rate(1/args.dt)
-    print("Registered with master node. Waiting for images...")
-    i = 0
-    start_time = float("inf")
-    while not rospy.is_shutdown():
-        if obs_img is not None:
-            obs_img.save(os.path.join(topomap_name_dir, f"{i}.png"))
-            print("published image", i)
-            i += 1
-            rate.sleep()
-            start_time = time.time()
-            obs_img = None
-        if time.time() - start_time > 2 * args.dt:
-            print(f"Topic {args.image_topic_name} not publishing anymore. Shutting down...")
-            rospy.signal_shutdown("shutdown")
+
+    bag_to_image(bagfile, args.image_topic_name, topomap_name_dir, args.dt)
+
+
+def bag_to_image(bag, image_topic, output_dir, dt):
+    prev_time = 0
+    img_idx = 0
+    for topic, msg, time in bag.read_messages(topics=image_topic):
+        if img_idx == 0 or (time - prev_time).to_sec() > dt:
+            save_path = os.path.join(output_dir, f"{img_idx}.png")
+            save_img = msg_to_pil(msg)
+            save_img.save(save_path)
+            img_idx += 1
+            prev_time = time
+
+    print(f"Saved {img_idx+1} images to {output_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=f"Code to generate topomaps from the image topic"
+    )
+    parser.add_argument(
+        "--bagfile-path",
+        "-b",
+        type=str,
+        help="path to bagfile",
     )
     parser.add_argument(
         "--output-dir",
@@ -93,9 +78,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dt",
         "-t",
-        default=1.,
+        default=3.,
         type=float,
-        help=f"time between images sampled from the {IMAGE_TOPIC} topic (default: 3.0)",
+        help=f"time between images sampled from the image topic (default: 3.0)",
     )
     args = parser.parse_args()
 

@@ -30,7 +30,6 @@ tmux send-keys "python joy_teleop.py" Enter
 
 # Run the pd_controller.py script in the fourth pane
 tmux select-pane -t 3
-tmux send-keys "conda activate vint_deployment" Enter
 tmux send-keys "python pd_controller.py" Enter
 
 # Attach to the tmux session
